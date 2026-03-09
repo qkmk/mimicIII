@@ -5,14 +5,16 @@ from torch import nn
 
 
 class ICDClassifier(nn.Module):
-    """Pool token embeddings and predict ICD labels."""
+    """MLP head for pooled embeddings."""
 
-    def __init__(self, d_model: int, num_labels: int) -> None:
+    def __init__(self, d_model: int, num_labels: int, dropout: float = 0.1) -> None:
         super().__init__()
-        self.pool = nn.AdaptiveAvgPool1d(1)
-        self.classifier = nn.Linear(d_model, num_labels)
+        self.head = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model, num_labels),
+        )
 
-    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
-        x = tokens.transpose(1, 2)
-        x = self.pool(x).squeeze(-1)
-        return self.classifier(x)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.head(x)

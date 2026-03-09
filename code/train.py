@@ -50,9 +50,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup_epochs", type=int, default=0, help="Warmup epochs.")
     parser.add_argument("--seq_len", type=int, default=4096, help="Fixed sequence length.")
     parser.add_argument("--patch_len", type=int, default=128, help="Patch length for Conv1d patchify.")
+    parser.add_argument("--stride", type=int, default=64, help="Stride for Conv1d patchify.")
     parser.add_argument("--d_model", type=int, default=256, help="Embedding dimension.")
     parser.add_argument("--n_heads", type=int, default=8, help="Attention heads.")
     parser.add_argument("--n_layers", type=int, default=4, help="Transformer layers.")
+    parser.add_argument("--pooling", choices=["cls", "mean"], default="cls", help="Pooling strategy.")
+    parser.add_argument("--dropout", type=float, default=None, help="Alias for all dropouts.")
+    parser.add_argument("--attn_dropout", type=float, default=0.1, help="Attention dropout.")
+    parser.add_argument("--mlp_dropout", type=float, default=0.1, help="MLP dropout.")
+    parser.add_argument("--classifier_dropout", type=float, default=0.1, help="Classifier dropout.")
     parser.add_argument("--num_workers", type=int, default=0, help="DataLoader workers.")
     parser.add_argument("--output", default="best.pt", help="Checkpoint output path.")
     parser.add_argument("--last_output", default=None, help="Last checkpoint path (default: run_dir/last.pt).")
@@ -525,6 +531,10 @@ def main() -> None:
     args = parse_args()
     if args.gradient_clip_norm is not None:
         args.grad_clip = args.gradient_clip_norm
+    if args.dropout is not None:
+        args.attn_dropout = args.dropout
+        args.mlp_dropout = args.dropout
+        args.classifier_dropout = args.dropout
     device = torch.device(args.device) if args.device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     run_name = args.run_name or time.strftime("%Y%m%d_%H%M%S")
@@ -597,12 +607,21 @@ def main() -> None:
         num_channels=train_dataset.num_channels,
         num_labels=train_dataset.num_labels,
         patch_len=args.patch_len,
+        stride=args.stride,
         d_model=args.d_model,
         n_heads=args.n_heads,
         n_layers=args.n_layers,
         seq_len=args.seq_len,
+        pooling=args.pooling,
+        attn_dropout=args.attn_dropout,
+        mlp_dropout=args.mlp_dropout,
+        classifier_dropout=args.classifier_dropout,
     )
     model.to(device)
+    print(
+        f"Token count: patches={model.patch_tokens} total={model.token_count} "
+        f"(patch_len={args.patch_len}, stride={args.stride}, seq_len={args.seq_len})"
+    )
 
     train_loader = DataLoader(
         train_dataset,
@@ -638,6 +657,8 @@ def main() -> None:
 
     history: list[dict] = []
     best_f1 = -1.0
+    best_macro_f1 = 0.0
+    best_threshold = 0.0
     best_epoch = 0
     patience_left = args.patience
     label_count_after = len(code2idx)
@@ -695,11 +716,14 @@ def main() -> None:
             f"labels_after={label_count_after} avg_labels={avg_labels_after:.3f} "
             f"pos_weight(min/mean/max)={pos_weight_text} "
             f"threshold={val_metrics['val_best_threshold']:.2f} "
+            f"token_count={model.token_count} "
             f"monitor=val_micro_f1({val_metrics['val_micro_f1']:.4f})"
         )
 
         if val_metrics["val_micro_f1"] > best_f1:
             best_f1 = val_metrics["val_micro_f1"]
+            best_macro_f1 = val_metrics["val_macro_f1"]
+            best_threshold = val_metrics["val_best_threshold"]
             best_epoch = epoch
             patience_left = args.patience
             torch.save(
@@ -708,9 +732,14 @@ def main() -> None:
                     "code2idx": train_dataset.code2idx,
                     "seq_len": args.seq_len,
                     "patch_len": args.patch_len,
+                    "stride": args.stride,
                     "d_model": args.d_model,
                     "n_heads": args.n_heads,
                     "n_layers": args.n_layers,
+                    "pooling": args.pooling,
+                    "attn_dropout": args.attn_dropout,
+                    "mlp_dropout": args.mlp_dropout,
+                    "classifier_dropout": args.classifier_dropout,
                     "min_label_freq": args.min_label_freq,
                     "use_pos_weight": args.use_pos_weight,
                     "pos_weight_clip_max": args.pos_weight_clip_max,
@@ -723,9 +752,14 @@ def main() -> None:
                     "code2idx": train_dataset.code2idx,
                     "seq_len": args.seq_len,
                     "patch_len": args.patch_len,
+                    "stride": args.stride,
                     "d_model": args.d_model,
                     "n_heads": args.n_heads,
                     "n_layers": args.n_layers,
+                    "pooling": args.pooling,
+                    "attn_dropout": args.attn_dropout,
+                    "mlp_dropout": args.mlp_dropout,
+                    "classifier_dropout": args.classifier_dropout,
                     "min_label_freq": args.min_label_freq,
                     "use_pos_weight": args.use_pos_weight,
                     "pos_weight_clip_max": args.pos_weight_clip_max,
@@ -783,6 +817,10 @@ def main() -> None:
         "run_name": run_name,
         "best_epoch": best_epoch,
         "best_val_micro_f1": best_f1,
+        "best_val_macro_f1": best_macro_f1,
+        "best_threshold": best_threshold,
+        "num_labels_after_filter": label_count_after,
+        "token_count": model.token_count,
         "epochs": args.epochs,
         "batch_size": args.batch_size,
         "lr": args.lr,
@@ -795,9 +833,14 @@ def main() -> None:
         "scheduler": args.scheduler,
         "seq_len": args.seq_len,
         "patch_len": args.patch_len,
+        "stride": args.stride,
         "d_model": args.d_model,
         "n_heads": args.n_heads,
         "n_layers": args.n_layers,
+        "pooling": args.pooling,
+        "attn_dropout": args.attn_dropout,
+        "mlp_dropout": args.mlp_dropout,
+        "classifier_dropout": args.classifier_dropout,
         "run_dir": str(run_dir),
         "output": str(output_path),
         "last_output": str(last_output_path),

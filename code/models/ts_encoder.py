@@ -7,13 +7,20 @@ from torch import nn
 class TransformerEncoderBlock(nn.Module):
     """Pre-norm transformer block for time-series tokens."""
 
-    def __init__(self, d_model: int, n_heads: int, mlp_ratio: float = 4.0, dropout: float = 0.0) -> None:
+    def __init__(
+        self,
+        d_model: int,
+        n_heads: int,
+        mlp_ratio: float = 4.0,
+        attn_dropout: float = 0.1,
+        mlp_dropout: float = 0.1,
+    ) -> None:
         super().__init__()
         self.norm1 = nn.LayerNorm(d_model)
         self.attn = nn.MultiheadAttention(
             embed_dim=d_model,
             num_heads=n_heads,
-            dropout=dropout,
+            dropout=attn_dropout,
             batch_first=True,
         )
         self.norm2 = nn.LayerNorm(d_model)
@@ -21,9 +28,9 @@ class TransformerEncoderBlock(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(d_model, hidden),
             nn.GELU(),
-            nn.Dropout(dropout),
+            nn.Dropout(mlp_dropout),
             nn.Linear(hidden, d_model),
-            nn.Dropout(dropout),
+            nn.Dropout(mlp_dropout),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -43,7 +50,8 @@ class TimeSeriesEncoder(nn.Module):
         n_heads: int,
         n_layers: int,
         max_tokens: int,
-        dropout: float = 0.0,
+        attn_dropout: float = 0.1,
+        mlp_dropout: float = 0.1,
     ) -> None:
         super().__init__()
         if max_tokens <= 0:
@@ -52,7 +60,13 @@ class TimeSeriesEncoder(nn.Module):
         self.pos_embed = nn.Parameter(torch.zeros(1, self.max_tokens, d_model))
         self.layers = nn.ModuleList(
             [
-                TransformerEncoderBlock(d_model, n_heads, mlp_ratio=4.0, dropout=dropout)
+                TransformerEncoderBlock(
+                    d_model,
+                    n_heads,
+                    mlp_ratio=4.0,
+                    attn_dropout=attn_dropout,
+                    mlp_dropout=mlp_dropout,
+                )
                 for _ in range(n_layers)
             ]
         )
